@@ -1,6 +1,9 @@
 import { Op } from 'sequelize';
 import Subscription from '../models/Subscription';
 import Meetup from '../models/Meetup';
+import User from '../models/User';
+import Queue from '../../lib/Queue';
+import SendMail from '../jobs/SendMail';
 
 class SubscriptionController {
   async index(req, res) {
@@ -36,7 +39,14 @@ class SubscriptionController {
   }
 
   async store(req, res) {
-    const meetup = await Meetup.findByPk(req.params.meetupId);
+    const meetup = await Meetup.findByPk(req.params.meetupId, {
+      include: [
+        {
+          model: User,
+          attributes: ['name', 'email'],
+        },
+      ],
+    });
 
     if (!meetup) {
       return res.status(400).json({ error: 'Meetup not found' });
@@ -90,12 +100,40 @@ class SubscriptionController {
         .json({ error: 'You not subscribe in two meetups with same time' });
     }
 
-    const { meetup_id, user_id } = await Subscription.create({
+    const { id } = await Subscription.create({
       meetup_id: meetup.id,
       user_id: req.userId,
     });
 
-    return res.status(201).json({ meetup_id, userId: user_id });
+    const subscription = await Subscription.findByPk(id, {
+      include: [
+        {
+          model: Meetup,
+          attributes: [
+            'id',
+            'title',
+            'description',
+            'date',
+            'location',
+            'user_id',
+          ],
+          include: [
+            {
+              model: User,
+              attributes: ['name', 'email'],
+            },
+          ],
+        },
+        {
+          model: User,
+          attributes: ['id', 'name', 'email'],
+        },
+      ],
+    });
+
+    await Queue.add(SendMail.key, { subscription });
+
+    return res.status(201).json(subscription);
   }
 }
 
